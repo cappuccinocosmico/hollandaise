@@ -1,6 +1,12 @@
 [package]
 name = "hollandaise"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
+automerge = "0.7"
+egui = "0.33"
+pulldown-cmark = "0.12"
+
+[dev-dependencies]
+eframe = "0.33"
