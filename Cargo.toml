@@ -1,12 +1,15 @@
 [package]
 name = "hollandaise"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-automerge = "0.7"
-egui = "0.33"
 pulldown-cmark = "0.12"
+automerge = { version = "0.7", optional = true }
+
+[features]
+default = []
+automerge = ["dep:automerge"]
 
 [dev-dependencies]
-eframe = "0.33"
+automerge = "0.7"

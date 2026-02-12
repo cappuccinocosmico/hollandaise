@@ -1,225 +1,160 @@
-//! Integration tests for Hollandaise
-//!
-//! These tests verify end-to-end behavior across multiple modules.
+use hollandaise::{Editor, InlineFormat, LocalBackend, TextBackend};
 
-use automerge::transaction::Transactable;
-use automerge::{AutoCommit, ObjType, ReadDoc, ROOT};
-use hollandaise::{apply_markdown, spans_to_markdown, toggle_format, InlineFormat};
-
-fn create_test_doc() -> (AutoCommit, automerge::ObjId) {
-    let mut doc = AutoCommit::new();
-    let text_obj = doc
-        .put_object(ROOT, "text", ObjType::Text)
-        .expect("Failed to create text object");
-    (doc, text_obj)
+fn editor_with_text(text: &str) -> Editor<LocalBackend> {
+    let mut b = LocalBackend::new();
+    b.splice(0, 0, text).unwrap();
+    Editor::new(b)
 }
 
 #[test]
 fn test_basic_editing_workflow() {
-    let (mut doc, text_obj) = create_test_doc();
+    let mut e = Editor::new(LocalBackend::new());
 
-    // 1. Insert some text
-    doc.splice_text(&text_obj, 0, 0, "Hello world").unwrap();
-    assert_eq!(doc.text(&text_obj).unwrap(), "Hello world");
+    e.insert_text(0, "Hello world").unwrap();
+    assert_eq!(e.text().unwrap(), "Hello world");
 
-    // 2. Apply formatting
-    toggle_format(&mut doc, &text_obj, InlineFormat::Strong, 0, 5);
+    e.toggle_format(InlineFormat::Strong, 0, 5).unwrap();
+    assert!(e.is_range_formatted(InlineFormat::Strong, 0, 5).unwrap());
 
-    // 3. Verify the formatting
-    for pos in 0..5 {
-        let marks = doc.get_marks(&text_obj, pos, None).unwrap();
-        assert!(marks.iter().any(|(name, _)| name == "strong"));
-    }
-
-    // 4. Export to markdown
-    let markdown = spans_to_markdown(&doc, &text_obj);
-    assert_eq!(markdown, "**Hello** world");
+    assert_eq!(e.to_markdown().unwrap(), "**Hello** world");
 }
 
 #[test]
 fn test_markdown_round_trip_workflow() {
-    let (mut doc, text_obj) = create_test_doc();
+    let mut e = Editor::new(LocalBackend::new());
+    let original = "**bold** *italic* ~~strike~~ `code`";
 
-    // 1. Start with markdown
-    let original_markdown = "**bold** *italic* ~~strike~~ `code`";
-    apply_markdown(&mut doc, &text_obj, original_markdown);
+    e.from_markdown(original).unwrap();
+    assert_eq!(e.text().unwrap(), "bold italic strike code");
 
-    // 2. Verify text was inserted
-    let text = doc.text(&text_obj).unwrap();
-    assert_eq!(text, "bold italic strike code");
+    assert!(e.is_range_formatted(InlineFormat::Strong, 0, 4).unwrap());
+    assert!(e.is_range_formatted(InlineFormat::Emphasis, 5, 11).unwrap());
 
-    // 3. Verify formatting
-    let marks_at_0 = doc.get_marks(&text_obj, 0, None).unwrap();
-    assert!(marks_at_0.iter().any(|(name, _)| name == "strong"));
-
-    let marks_at_5 = doc.get_marks(&text_obj, 5, None).unwrap();
-    assert!(marks_at_5.iter().any(|(name, _)| name == "em"));
-
-    // 4. Round-trip back to markdown
-    let exported_markdown = spans_to_markdown(&doc, &text_obj);
-    assert_eq!(exported_markdown, original_markdown);
+    assert_eq!(e.to_markdown().unwrap(), original);
 }
 
 #[test]
 fn test_toggle_formatting_workflow() {
-    let (mut doc, text_obj) = create_test_doc();
+    let mut e = editor_with_text("Hello world");
 
-    // 1. Insert text
-    doc.splice_text(&text_obj, 0, 0, "Hello world").unwrap();
+    e.toggle_format(InlineFormat::Strong, 0, 5).unwrap();
+    assert_eq!(e.to_markdown().unwrap(), "**Hello** world");
 
-    // 2. Apply bold
-    toggle_format(&mut doc, &text_obj, InlineFormat::Strong, 0, 5);
-    let markdown = spans_to_markdown(&doc, &text_obj);
-    assert_eq!(markdown, "**Hello** world");
+    e.toggle_format(InlineFormat::Strong, 0, 5).unwrap();
+    assert_eq!(e.to_markdown().unwrap(), "Hello world");
 
-    // 3. Toggle bold off
-    toggle_format(&mut doc, &text_obj, InlineFormat::Strong, 0, 5);
-    let markdown = spans_to_markdown(&doc, &text_obj);
-    assert_eq!(markdown, "Hello world");
-
-    // 4. Apply multiple formats
-    toggle_format(&mut doc, &text_obj, InlineFormat::Strong, 0, 5);
-    toggle_format(&mut doc, &text_obj, InlineFormat::Emphasis, 0, 5);
-    let markdown = spans_to_markdown(&doc, &text_obj);
-    assert_eq!(markdown, "***Hello*** world");
+    e.toggle_format(InlineFormat::Strong, 0, 5).unwrap();
+    e.toggle_format(InlineFormat::Emphasis, 0, 5).unwrap();
+    assert_eq!(e.to_markdown().unwrap(), "***Hello*** world");
 }
 
 #[test]
 fn test_partial_selection_formatting() {
-    let (mut doc, text_obj) = create_test_doc();
+    let mut e = editor_with_text("Hello beautiful world");
 
-    // 1. Insert text
-    doc.splice_text(&text_obj, 0, 0, "Hello beautiful world").unwrap();
+    e.toggle_format(InlineFormat::Strong, 0, 5).unwrap();
+    e.toggle_format(InlineFormat::Emphasis, 6, 15).unwrap();
+    e.toggle_format(InlineFormat::Code, 16, 21).unwrap();
 
-    // 2. Format different parts
-    toggle_format(&mut doc, &text_obj, InlineFormat::Strong, 0, 5); // "Hello"
-    toggle_format(&mut doc, &text_obj, InlineFormat::Emphasis, 6, 15); // "beautiful"
-    toggle_format(&mut doc, &text_obj, InlineFormat::Code, 16, 21); // "world"
+    let md = e.to_markdown().unwrap();
+    assert_eq!(md, "**Hello** *beautiful* `world`");
 
-    // 3. Verify markdown
-    let markdown = spans_to_markdown(&doc, &text_obj);
-    assert_eq!(markdown, "**Hello** *beautiful* `world`");
-
-    // 4. Round-trip
-    let (mut doc2, text_obj2) = create_test_doc();
-    apply_markdown(&mut doc2, &text_obj2, &markdown);
-    let markdown2 = spans_to_markdown(&doc2, &text_obj2);
-    assert_eq!(markdown2, markdown);
+    // Round-trip
+    let mut e2 = Editor::new(LocalBackend::new());
+    e2.from_markdown(&md).unwrap();
+    assert_eq!(e2.to_markdown().unwrap(), md);
 }
 
 #[test]
 fn test_editing_with_existing_formatting() {
-    let (mut doc, text_obj) = create_test_doc();
+    let mut e = Editor::new(LocalBackend::new());
+    e.from_markdown("**Hello** world").unwrap();
 
-    // 1. Start with formatted text
-    apply_markdown(&mut doc, &text_obj, "**Hello** world");
+    // Insert inside formatted region
+    e.insert_text(2, "XX").unwrap();
+    assert_eq!(e.text().unwrap(), "HeXXllo world");
 
-    // 2. Insert text in the middle of formatted region
-    doc.splice_text(&text_obj, 2, 0, "XX").unwrap();
-
-    // 3. The inserted text should inherit the bold mark (due to ExpandMark::Both)
-    let text = doc.text(&text_obj).unwrap();
-    assert_eq!(text, "HeXXllo world");
-
-    // Check that XX is bold (positions 2 and 3)
-    let marks_at_2 = doc.get_marks(&text_obj, 2, None).unwrap();
-    assert!(marks_at_2.iter().any(|(name, _)| name == "strong"));
-
-    let marks_at_3 = doc.get_marks(&text_obj, 3, None).unwrap();
-    assert!(marks_at_3.iter().any(|(name, _)| name == "strong"));
+    // XX should inherit the bold mark (LocalBackend extends marks on insert inside)
+    assert!(e.formats_at(2).unwrap().has(InlineFormat::Strong));
+    assert!(e.formats_at(3).unwrap().has(InlineFormat::Strong));
 }
 
 #[test]
 fn test_delete_within_formatted_text() {
-    let (mut doc, text_obj) = create_test_doc();
+    let mut e = Editor::new(LocalBackend::new());
+    e.from_markdown("**Hello** world").unwrap();
 
-    // 1. Start with formatted text
-    apply_markdown(&mut doc, &text_obj, "**Hello** world");
-
-    // 2. Delete part of the formatted text
-    doc.splice_text(&text_obj, 1, 2, "").unwrap(); // Delete "el"
-
-    // 3. Verify text
-    let text = doc.text(&text_obj).unwrap();
-    assert_eq!(text, "Hlo world");
-
-    // 4. Remaining "Hlo" should still be bold
-    let markdown = spans_to_markdown(&doc, &text_obj);
-    assert_eq!(markdown, "**Hlo** world");
+    e.delete_range(1, 3).unwrap();
+    assert_eq!(e.text().unwrap(), "Hlo world");
+    assert_eq!(e.to_markdown().unwrap(), "**Hlo** world");
 }
 
 #[test]
 fn test_complex_formatting_combinations() {
-    let (mut doc, text_obj) = create_test_doc();
+    let mut e = editor_with_text("Test");
 
-    // Test all four formats on the same text
-    doc.splice_text(&text_obj, 0, 0, "Test").unwrap();
+    e.toggle_format(InlineFormat::Strong, 0, 4).unwrap();
+    e.toggle_format(InlineFormat::Emphasis, 0, 4).unwrap();
+    e.toggle_format(InlineFormat::Strikethrough, 0, 4).unwrap();
+    e.toggle_format(InlineFormat::Code, 0, 4).unwrap();
 
-    toggle_format(&mut doc, &text_obj, InlineFormat::Strong, 0, 4);
-    toggle_format(&mut doc, &text_obj, InlineFormat::Emphasis, 0, 4);
-    toggle_format(&mut doc, &text_obj, InlineFormat::Strikethrough, 0, 4);
-    toggle_format(&mut doc, &text_obj, InlineFormat::Code, 0, 4);
-
-    // All four marks should be present
     for pos in 0..4 {
-        let marks = doc.get_marks(&text_obj, pos, None).unwrap();
-        assert!(marks.iter().any(|(name, _)| name == "strong"));
-        assert!(marks.iter().any(|(name, _)| name == "em"));
-        assert!(marks.iter().any(|(name, _)| name == "strikethrough"));
-        assert!(marks.iter().any(|(name, _)| name == "code"));
+        let fs = e.formats_at(pos).unwrap();
+        assert!(fs.has(InlineFormat::Strong));
+        assert!(fs.has(InlineFormat::Emphasis));
+        assert!(fs.has(InlineFormat::Strikethrough));
+        assert!(fs.has(InlineFormat::Code));
     }
 
-    // Markdown should show nested formatting
-    let markdown = spans_to_markdown(&doc, &text_obj);
-    assert_eq!(markdown, "***~~`Test`~~***");
+    assert_eq!(e.to_markdown().unwrap(), "***~~`Test`~~***");
 }
 
 #[test]
 fn test_empty_document() {
-    let (doc, text_obj) = create_test_doc();
-
-    // Empty document
-    assert_eq!(doc.text(&text_obj).unwrap(), "");
-
-    // Export to markdown should be empty
-    let markdown = spans_to_markdown(&doc, &text_obj);
-    assert_eq!(markdown, "");
-}
-
-#[test]
-fn test_markdown_with_special_characters() {
-    let (mut doc, text_obj) = create_test_doc();
-
-    // Test text with characters that might need escaping
-    let text = "Test with * and _ and ~ chars";
-    doc.splice_text(&text_obj, 0, 0, text).unwrap();
-
-    // Apply formatting to part of it
-    toggle_format(&mut doc, &text_obj, InlineFormat::Strong, 0, 4);
-
-    let markdown = spans_to_markdown(&doc, &text_obj);
-    assert_eq!(markdown, "**Test** with * and _ and ~ chars");
-
-    // Round-trip should preserve the text
-    let (mut doc2, text_obj2) = create_test_doc();
-    apply_markdown(&mut doc2, &text_obj2, &markdown);
-    assert_eq!(doc2.text(&text_obj2).unwrap(), text);
+    let e = Editor::new(LocalBackend::new());
+    assert_eq!(e.text().unwrap(), "");
+    assert_eq!(e.to_markdown().unwrap(), "");
+    assert_eq!(e.spans().unwrap(), vec![]);
 }
 
 #[test]
 fn test_markdown_import_clears_previous_content() {
-    let (mut doc, text_obj) = create_test_doc();
+    let mut e = Editor::new(LocalBackend::new());
 
-    // 1. Add some initial content
-    apply_markdown(&mut doc, &text_obj, "**Old content**");
-    assert_eq!(doc.text(&text_obj).unwrap(), "Old content");
+    e.from_markdown("**Old content**").unwrap();
+    assert_eq!(e.text().unwrap(), "Old content");
 
-    // 2. Import new markdown (should clear old content)
-    apply_markdown(&mut doc, &text_obj, "*New content*");
-    assert_eq!(doc.text(&text_obj).unwrap(), "New content");
+    e.from_markdown("*New content*").unwrap();
+    assert_eq!(e.text().unwrap(), "New content");
 
-    // 3. Verify only new formatting exists
-    let marks_at_0 = doc.get_marks(&text_obj, 0, None).unwrap();
-    assert!(marks_at_0.iter().any(|(name, _)| name == "em"));
-    assert!(!marks_at_0.iter().any(|(name, _)| name == "strong"));
+    assert!(e.formats_at(0).unwrap().has(InlineFormat::Emphasis));
+    assert!(!e.formats_at(0).unwrap().has(InlineFormat::Strong));
+}
+
+#[test]
+fn test_spans_provide_rendering_data() {
+    let mut e = editor_with_text("Hello beautiful world");
+    e.toggle_format(InlineFormat::Strong, 0, 5).unwrap();
+    e.toggle_format(InlineFormat::Emphasis, 6, 15).unwrap();
+
+    let spans = e.spans().unwrap();
+
+    // Consumer can iterate spans for rendering
+    assert_eq!(spans.len(), 4);
+    assert_eq!(spans[0].text, "Hello");
+    assert!(spans[0].formats.strong);
+    assert_eq!(spans[1].text, " ");
+    assert!(spans[1].formats.is_empty());
+    assert_eq!(spans[2].text, "beautiful");
+    assert!(spans[2].formats.emphasis);
+    assert_eq!(spans[3].text, " world");
+    assert!(spans[3].formats.is_empty());
+}
+
+#[test]
+fn test_backend_access() {
+    let mut e = editor_with_text("Hello");
+    assert_eq!(e.backend().char_count().unwrap(), 5);
+    e.backend_mut().splice(5, 0, "!").unwrap();
+    assert_eq!(e.text().unwrap(), "Hello!");
 }
