@@ -4,12 +4,22 @@ version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-pulldown-cmark = "0.12"
+pulldown-cmark = "0.13"
 automerge = { version = "0.7", optional = true }
+wgpu = { version = "28", optional = true }
+winit = { version = "0.30", optional = true }
+glyphon = { version = "0.10", optional = true }
+pollster = { version = "0.4", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }
 
 [features]
 default = []
 automerge = ["dep:automerge"]
+wgpu-example = ["dep:wgpu", "dep:winit", "dep:glyphon", "dep:pollster", "dep:bytemuck"]
+
+[[example]]
+name = "wgpu_editor"
+required-features = ["wgpu-example"]
 
 [dev-dependencies]
 automerge = "0.7"
