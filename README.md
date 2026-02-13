@@ -1,6 +1,8 @@
 # Hollandaise
 
-A collaborative rich text editor widget for [egui](https://github.com/emilk/egui), backed by [Automerge's Peritext](https://www.inkandswitch.com/peritext/) rich text CRDT.
+A collaborative rich text editor in full WebGPU mostly designed as a widget for [egui](https://github.com/emilk/egui)
+
+CRDT backend powered by [Automerge's Peritext](https://www.inkandswitch.com/peritext/) rich text CRDT.
 
 ## Features
 
